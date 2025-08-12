@@ -37,7 +37,7 @@ class SimpleBPETokenizer:
             for words_token_list in word_tokens:                            # Iterate Over All Word's Char List
                 for i in range(len(words_token_list) - 1):                  # Iterate Over Each Char in Word's Char List
                     pair = (words_token_list[i], words_token_list[i + 1])   # Create Pairs From Each Word
-                pairs[pair] += 1                                            # Increment Frequency
+                    pairs[pair] += 1                                            # Increment Frequency
 
             # Ensure Progress Continues
             if not pairs:
