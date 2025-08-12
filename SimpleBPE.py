@@ -3,7 +3,7 @@ from collections import Counter
 class SimpleBPETokenizer:
     def __init__(self, special_tokens = None):
         self.vocab = {}
-        self.merges = {}
+        self.merges = []
         self.special_tokens = special_tokens or []
 
     def train(self, text, vocab_size=100, min_frequency=3, verbosity=0):
@@ -88,7 +88,7 @@ class SimpleBPETokenizer:
                     # Check if Tokens Can be Merged
                     if (i < len(word_token_list) - 1 and
                         word_token_list[i] == best_pair[0] and
-                        word_token_list[i + 1] == best_pair[0]):
+                        word_token_list[i + 1] == best_pair[1]):
                         
                         # Merge Pair
                         new_tokens.append(new_token)
