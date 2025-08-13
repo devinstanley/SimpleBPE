@@ -1,4 +1,5 @@
 from collections import Counter
+import re
 
 class SimpleBPETokenizer:
     def __init__(self, special_tokens = None):
@@ -8,7 +9,7 @@ class SimpleBPETokenizer:
 
     def train(self, text, vocab_size=100, min_frequency=3, verbosity=0):
         # Breakup Input Text
-        original_words = text.split()
+        original_words = re.findall(r"\w+|[^\w\s]", text)
 
         # Convert Each Word to a List of Chars
         word_tokens = [list(word) for word in original_words]
