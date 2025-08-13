@@ -98,5 +98,36 @@ class SimpleSkipGramEmbeddings:
         if token_id < self.vocab_size:
             return self.E[token_id]
         return np.zeros(self.dim)
+    
+    def similarity(self, token1, token2):
+        # Compute Cosine Similarity Between Two Tokens
+        v1 = self.get_embedding(token1)
+        v2 = self.get_embedding(token2)
+
+        norm1 = np.linalg.norm(v1)
+        norm2 = np.linalg.norm(v2)
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        
+        return np.dot(v1, v2) / (norm1 * norm2)
+    
+    def most_similar(self, token_id, top_k = 5):
+        # Return Empty Set if Token Not In Embedding
+        if token_id > self.vocab_size:
+            return []
+        
+        target_embedding = self.E[token_id]
+        similarities = []
+
+        for i in range(self.vocab_size):
+            # Skip Identity
+            if i != token_id:
+                sim = self.similarity(token_id, i)
+                similarities.append((i, sim))
+        
+        # Find Highest Similarities
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return similarities[:top_k]
 
 
