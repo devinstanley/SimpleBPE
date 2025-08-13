@@ -1,15 +1,16 @@
 from collections import Counter
-import re
+import re, json
 
 class SimpleBPETokenizer:
     def __init__(self, special_tokens = None):
         self.vocab = {}
         self.merges = []
         self.special_tokens = special_tokens or []
+        self.id_to_token = {}
 
     def train(self, text, vocab_size=100, min_frequency=3, verbosity=0):
         # Breakup Input Text
-        original_words = re.findall(r"\w+|[^\w\s]", text)
+        original_words = re.findall(r"\w+|\s+|[^\w\s]", text)
 
         # Convert Each Word to a List of Chars
         word_tokens = [list(word) for word in original_words]
@@ -111,15 +112,86 @@ class SimpleBPETokenizer:
             if ii > vocab_size * 2:
                 print("Too many iterations, exiting...")
 
+        self.id_to_token = {v: k for k, v in self.vocab.items()}
+
     def encode(self, text):
-        pass
+        # Breakup Input Text
+        words = re.findall(r"\w+|\s+|[^\w\s]", text)
+
+        # Convert Each Word to a List of Chars
+        word_tokens = [list(word) for word in words]
+
+        # Apply Merges In Learned Order
+        for merge_pair in self.merges:
+            new_word_tokens = []
+            for word_token_list in word_tokens:
+                new_tokens = []
+                i = 0
+                while i < len(word_token_list):
+                    if (
+                        i < len(word_token_list) - 1 and
+                        word_token_list[i] == merge_pair[0] and
+                        word_token_list[i + 1] == merge_pair[1]
+                    ):
+                        merged_token = "".join(merge_pair)
+                        new_tokens.append(merged_token)
+                        i += 2
+                    else:
+                        new_tokens.append(word_token_list[i])
+                        i += 1
+                new_word_tokens.append(new_tokens)
+            word_tokens = new_word_tokens
+
+        # Convert Tokens to IDs
+        token_ids = []
+        for word_token_list in word_tokens:
+            for token in word_token_list:
+                if token in self.vocab:
+                    token_ids.append(self.vocab[token])
+                else:
+                    # TODO:: Handle Unknown Tokens Here
+                    # For now, attempt to go char by char
+                    for char in token:
+                        if char in self.vocab:
+                            token_ids.append(self.vocab[char])
+
+        return token_ids
+                    
 
     def decode(self, token_ids):
-        pass
+        tokens = []
+        for token_id in token_ids:
+            if token_id in self.id_to_token:
+                tokens.append(self.id_to_token[token_id])
+            else:
+                # TODO:: Handle Unknowns Here
+                # For now, append UNK
+                tokens.append("<UNK>")
+        return "".join(tokens)
 
     def save(self, filepath):
-        pass
+        # Pack Into Dictionary
+        tokenizer_data = {
+            'vocab': self.vocab,
+            'merges': self.merges,
+            'special_tokens': self.special_tokens
+        }
+
+        # Store as JSON
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(tokenizer_data, f, indent=2, ensure_ascii=False)
 
     @classmethod
     def load(cls, filepath):
-        pass
+        # Load File
+        with open(filepath, 'r', encoding='utf-8') as f:
+            tokenizer_data = json.load(f)
+
+        # Construct Class
+        tokenizer = cls(special_tokens=tokenizer_data['special_tokens'])
+        tokenizer.vocab = tokenizer_data['vocab']
+        tokenizer.merges = [(pair[0], pair[1]) if isinstance(pair, list) else pair 
+                           for pair in tokenizer_data['merges']]
+        tokenizer.id_to_token = {v: k for k, v in tokenizer.vocab.items()}
+
+        return tokenizer
