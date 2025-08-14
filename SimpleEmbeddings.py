@@ -89,15 +89,15 @@ class SimpleSkipGramEmbeddings:
         # Training Loop
         for epoch in range(epochs):
             print(f"Starting Epoch: {epoch}")
-            for i, center_token in tqdm(enumerate(token_ids)):
+            for i, center_token in tqdm(enumerate(subsampled_tokens)):
                 # Create Context Window
                 start = max(0, i - window_size)
-                end = min(len(token_ids), i + window_size + 1)
+                end = min(len(subsampled_tokens), i + window_size + 1)
 
                 for j in range(start, end):
                     # Skip Center Word
                     if i != j:
-                        context_token = token_ids[j]
+                        context_token = subsampled_tokens[j]
                         self.train_pair(center_token, context_token, lr)
 
     def _subsample_frequent_words(self, token_ids, threshold=1e-5):
