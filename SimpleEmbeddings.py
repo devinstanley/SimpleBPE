@@ -1,6 +1,7 @@
 import math, random
 import numpy as np
 from collections import defaultdict
+from tqdm import tqdm
 
 def sigmoid(x):
     return 1 / (1 + math.exp(-x))
@@ -14,7 +15,7 @@ class SimpleSkipGramEmbeddings:
         self.E = np.random.uniform(-0.5/dim, 0.5/dim, (vocab_size, dim))
 
         # Output Embeddings
-        self.C = np.random.uniform(-0.5/dim, 0.5,dim, (vocab_size, dim))
+        self.C = np.random.uniform(-0.5/dim, 0.5/dim, (vocab_size, dim))
 
         # Track Word Frequencies for Sampling
         self.word_counts = defaultdict(int)
@@ -79,10 +80,16 @@ class SimpleSkipGramEmbeddings:
     def train_on_tokens(self, token_ids, window_size=2, epochs=1, lr=0.01):
         # Update Word Counts for Negative Samples
         self.update_word_counts(token_ids)
+        print(f"Training on {len(token_ids)} tokens...")
+
+        # Optional: Subsample frequent words (like "the", "a", etc.)
+        subsampled_tokens = self._subsample_frequent_words(token_ids)
+        print(f"After subsampling: {len(subsampled_tokens)} tokens")
 
         # Training Loop
         for epoch in range(epochs):
-            for i, center_token in enumerate(token_ids):
+            print(f"Starting Epoch: {epoch}")
+            for i, center_token in tqdm(enumerate(token_ids)):
                 # Create Context Window
                 start = max(0, i - window_size)
                 end = min(len(token_ids), i + window_size + 1)
@@ -92,6 +99,26 @@ class SimpleSkipGramEmbeddings:
                     if i != j:
                         context_token = token_ids[j]
                         self.train_pair(center_token, context_token, lr)
+
+    def _subsample_frequent_words(self, token_ids, threshold=1e-5):
+        """Subsample frequent words to speed up training"""
+        if not self.word_counts:
+            return token_ids
+            
+        subsampled = []
+        for token_id in token_ids:
+            freq = self.word_counts[token_id] / self.total_words
+            
+            # Probability of keeping the word
+            if freq <= threshold:
+                prob_keep = 1.0
+            else:
+                prob_keep = (np.sqrt(freq / threshold) + 1) * (threshold / freq)
+            
+            if random.random() < prob_keep:
+                subsampled.append(token_id)
+                
+        return subsampled
 
     def get_embedding(self, token_id):
         # Return Embedding if Exists, Otherwise 0 Vector
