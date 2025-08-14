@@ -57,7 +57,7 @@ class Tester:
                 test_token = np.random.choice(tokens)
                 decoded_token = bpe.decode([test_token])
                 similar = embedding.most_similar(test_token, top_k=3)
-                decoded_similar = [bpe.decode(s[0]) for s in similar]
+                decoded_similar = [bpe.decode([s[0]]) for s in similar]
                 print(f"{i}. Most similar to token {test_token}: {similar}")
                 print(f"\tMost similar to decoded token {decoded_token}: {decoded_similar}")
 
