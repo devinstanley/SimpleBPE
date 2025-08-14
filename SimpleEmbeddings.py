@@ -6,7 +6,7 @@ from tqdm import tqdm
 def sigmoid(x):
     # Clip to Prevent Overflow
     x = np.clip(x, -500, 500)
-    return 1 / (1 + math.exp(-x))
+    return 1 / (1 + np.exp(-x))
 
 class SimpleSkipGramEmbeddings:
     def __init__(self, vocab_size, dim, verbosity = 0):
@@ -42,7 +42,7 @@ class SimpleSkipGramEmbeddings:
 
         # Calculate Probabilities
         words = list(self.word_counts.keys())
-        probs = np.array(self.word_counts[w] ** 0.75 for w in words)
+        probs = np.array([self.word_counts[w] ** 0.75 for w in words])
         probs /= probs.sum()
 
         # Build Table
@@ -57,23 +57,23 @@ class SimpleSkipGramEmbeddings:
             print(f"Negative sampling table built with {len(self.neg_sampling_table)}")
 
 
-    def negative_sample(self, positive_context, num_samples=5):
+    def negative_sample(self, positive_contexts, num_samples=5):
         if self.neg_sampling_table is None or len(self.neg_sampling_table) == 0:
-            batch_size = len(positive_context) if hasattr(positive_context, '__len__') else 1
-            return np.random.choice(self.vocab_sie, (batch_size, num_samples))
+            batch_size = len(positive_contexts) if hasattr(positive_contexts, '__len__') else 1
+            return np.random.choice(self.vocab_size, (batch_size, num_samples))
         
-        if not hasattr(positive_context, '__len__'):
-            positive_context = [positive_context]
+        if not hasattr(positive_contexts, '__len__'):
+            positive_contexts = [positive_contexts]
 
-        batch_size = len(positive_context)
+        batch_size = len(positive_contexts)
         negatives = np.zeros((batch_size, num_samples), dtype=np.int32)
 
-        for i, pos_context in enumerate(positive_context):
+        for i, pos_context in enumerate(positive_contexts):
             neg_samples = set()
-            attemps = 0
+            attempts = 0
             max_attempts = num_samples * 10 # Prevent Infinite Loop
 
-            while len(neg_samples) < num_samples and attemps < max_attempts:
+            while len(neg_samples) < num_samples and attempts < max_attempts:
                 candidate = np.random.choice(self.neg_sampling_table)
                 if candidate != pos_context:
                     neg_samples.add(candidate)
@@ -88,82 +88,128 @@ class SimpleSkipGramEmbeddings:
             negatives[i] = neg_list[:num_samples]
 
         return negatives if batch_size > 1 else negatives[0]
+    
+    def train_batch(self, center_batch, context_batch, lr=0.01, negative_samples=5):
+        center_batch = np.array(center_batch, dtype=np.int32)
+        context_batch = np.array(context_batch, dtype=np.int32)
+        batch_size = len(center_batch)
 
-    def train_pair(self, center, context, lr=0.01, negative_samples=5):
-        # Center Word Embedding
-        v_c = self.E[center]
-
-        # Context Word Embedding
-        v_o = self.C[context]
+        # Get Embeddings
+        v_centers = self.E[center_batch]
+        v_contexts = self.C[context_batch]
 
         # Positive Samples
-        pos_score = np.dot(v_c, v_o)
-        pos_sigmoid = sigmoid(pos_score)
-        pos_grad = 1 - pos_sigmoid
+        pos_scores = np.sum(v_centers * v_contexts, axis=1)
+        pos_sigmoids = sigmoid(pos_scores)
+        pos_grads = (1 - pos_sigmoids).astype(np.float32)
 
-        # Update Embeddings From Positive Sample
-        v_c_grad = pos_grad * v_o
-        v_o_grad = pos_grad * v_c
+        # Gradient Accumulators
+        center_grads = pos_grads[:, np.newaxis] * v_contexts
+        context_grads = pos_grads[:, np.newaxis] * v_centers
 
-        # Negative Sampling
-        negatives = self.negative_sample(context, negative_samples)
-        for negative_context in negatives:
-            v_neg = self.C[negative_context]
-            neg_score = np.dot(v_c, v_neg)
-            neg_sigmoid = sigmoid(neg_score)
+        # Negative Samples
+        neg_samples = self.negative_sample(context_batch.tolist(), negative_samples)
 
-            neg_grad = -neg_sigmoid
+        for i in range(batch_size):
+            center_embed = v_centers[i]
+            neg_indices = neg_samples[i] if batch_size > 1 else neg_samples
 
-            # Accumulate Negative Sample Gradients
-            v_c_grad += neg_grad * v_neg
-            self.C[negative_context] += lr * neg_grad * v_c
-        
+            v_negs = self.C[neg_indices]
+            neg_scores = np.dot(v_negs, center_embed)
+            neg_sigmoids = sigmoid(neg_scores)
+            neg_grads = - neg_sigmoids.astype(np.float32)
+
+            # Update Negative Embeddings
+            self.C[neg_indices] += lr * neg_grads[:, np.newaxis] * center_embed
+
+            # Accumulate Gradients
+            center_grads[i] += np.sum(neg_grads[:, np.newaxis] * v_negs, axis=0)
+
         # Apply Gradients
-        self.E[center] += lr * v_c_grad
-        self.C[context] += lr * v_o_grad
+        self.E[center_batch] += lr * center_grads
+        self.C[context_batch] += lr * context_grads
 
-    def train_on_tokens(self, token_ids, window_size=2, epochs=1, lr=0.01):
-        # Update Word Counts for Negative Samples
-        self.update_word_counts(token_ids)
-        print(f"Training on {len(token_ids)} tokens...")
+    def create_training_pairs(self, token_ids, window_size=2, subsample_threshold=1e-5):
+        # Subsample Tokens First if Enabled
+        if subsample_threshold > 0:
+            token_ids = self.subsample_frequent_words(token_ids, subsample_threshold)
 
-        # Optional: Subsample frequent words (like "the", "a", etc.)
-        subsampled_tokens = self._subsample_frequent_words(token_ids)
-        print(f"After subsampling: {len(subsampled_tokens)} tokens")
+        pairs = []
+        for i in range(len(token_ids)):
+            center_token = token_ids[i]
 
-        # Training Loop
-        for epoch in range(epochs):
-            print(f"Starting Epoch: {epoch}")
-            for i, center_token in tqdm(enumerate(subsampled_tokens)):
-                # Create Context Window
-                start = max(0, i - window_size)
-                end = min(len(subsampled_tokens), i + window_size + 1)
+            # Dynamic Window Sizing
+            actual_window = np.random.randint(1, window_size + 1)
 
-                for j in range(start, end):
-                    # Skip Center Word
-                    if i != j:
-                        context_token = subsampled_tokens[j]
-                        self.train_pair(center_token, context_token, lr)
+            start = max(0, i - actual_window)
+            end = min(len(token_ids), i + actual_window + 1)
 
-    def _subsample_frequent_words(self, token_ids, threshold=1e-5):
-        """Subsample frequent words to speed up training"""
-        if not self.word_counts:
+            for j in range(start, end):
+                if i != j:
+                    context_token = token_ids[j]
+                    pairs.append((center_token, context_token))
+        
+        return pairs
+
+    def subsample_frequent_words(self, token_ids, threshold=1e-5):
+        # Subsample Frequent Words
+        if not self.word_counts or self.total_words == 0:
             return token_ids
             
         subsampled = []
         for token_id in token_ids:
             freq = self.word_counts[token_id] / self.total_words
             
-            # Probability of keeping the word
+            # Word2Vec Formula
             if freq <= threshold:
                 prob_keep = 1.0
             else:
                 prob_keep = (np.sqrt(freq / threshold) + 1) * (threshold / freq)
             
-            if random.random() < prob_keep:
+            if np.random.random() < prob_keep:
                 subsampled.append(token_id)
-                
+        
         return subsampled
+    
+    def train_on_tokens(self, token_ids, window_size=2, epochs=1, lr=0.01, batch_size=1000, negative_samples = 5, subsample_threshold = 1e-5):
+        if self.verbosity > 0:
+            print(f"Training on {len(token_ids)} tokens...")
+
+        # Update Word Counts for Negative Samples
+        self.update_word_counts(token_ids)
+        self.build_negative_sampling_table()
+
+        for epoch in range(epochs):
+            if self.verbosity > 0:
+                print(f"Starting Epoch {epoch + 1} / {epochs}")
+
+            # Generate Training Pairs
+            pairs = self.create_training_pairs(token_ids, window_size, subsample_threshold)
+            if self.verbosity > 0:
+                print(f"Generated {len(pairs)} training pairs")
+
+            # Randomize for Better Training
+            np.random.shuffle(pairs)
+
+            # Batch Training
+            total_batches = (len(pairs) + batch_size - 1) // batch_size
+
+            for batch_idx in tqdm(range(total_batches), desc="Training batches"):
+                start_idx = batch_idx * batch_size
+                end_idx = min(start_idx + batch_size, len(pairs))
+                batch_pairs = pairs[start_idx:end_idx]
+
+                if not batch_pairs:
+                    continue
+                
+                # Split Into Centers and Contexts
+                centers, contexts = zip(*batch_pairs)
+
+                self.train_batch(list(centers), list(contexts), lr, negative_samples)
+
+            if self.verbosity > 0:
+                print(f"Epoch {epoch + 1} completed")
+
 
     def get_embedding(self, token_id):
         # Return Embedding if Exists, Otherwise 0 Vector
@@ -186,7 +232,7 @@ class SimpleSkipGramEmbeddings:
     
     def most_similar(self, token_id, top_k = 5):
         # Return Empty Set if Token Not In Embedding
-        if token_id > self.vocab_size:
+        if token_id >= self.vocab_size:
             return []
         
         target_embedding = self.E[token_id]
