@@ -5,9 +5,14 @@ from SimpleEmbeddings import SimpleSkipGramEmbeddings
 
 tests = {
     'small': {
-        'vocab_size': 500,
+        'vocab_size': 3000,
         'min_frequency': 3,
         'embedding_dimension': 128,
+        'embedding_lr': 0.025,
+        'embedding_epochs': 3,
+        'embedding_window': 5,
+        'embedding_negative_samples': 10,
+        'embedding_subsample_thresh': 1e-4
     }
 }
 
@@ -48,9 +53,16 @@ class Tester:
 
     # Embed Testing
     def embed_tokens(self, bpe, test):
-        embedding = SimpleSkipGramEmbeddings(test['vocab_size'], test['embedding_dimension'])
+        embedding = SimpleSkipGramEmbeddings(test['vocab_size'], test['embedding_dimension'], self.verbosity)
         tokens = bpe.encode(self.text)
-        embedding.train_on_tokens(tokens)
+        embedding.train_on_tokens(
+            tokens, 
+            window_size=test['embedding_window'], 
+            epochs=tests['embedding_epochs'], 
+            lr=tests['embedding_lr'], 
+            negative_samples=tests['embedding_negative_samples'],
+            subsample_threshold=tests['embedding_subsample_thresh']
+        )
 
         if len(tokens) > 10:
             for i in range(10):
