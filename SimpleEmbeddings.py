@@ -4,12 +4,15 @@ from collections import defaultdict
 from tqdm import tqdm
 
 def sigmoid(x):
+    # Clip to Prevent Overflow
+    x = np.clip(x, -500, 500)
     return 1 / (1 + math.exp(-x))
 
 class SimpleSkipGramEmbeddings:
-    def __init__(self, vocab_size, dim):
+    def __init__(self, vocab_size, dim, verbosity = 0):
         self.dim = dim
         self.vocab_size = vocab_size
+        self.verbosity = verbosity
 
         # Input Embeddings
         self.E = np.random.uniform(-0.5/dim, 0.5/dim, (vocab_size, dim))
@@ -17,9 +20,10 @@ class SimpleSkipGramEmbeddings:
         # Output Embeddings
         self.C = np.random.uniform(-0.5/dim, 0.5/dim, (vocab_size, dim))
 
-        # Track Word Frequencies for Sampling
+        # For Negative Sampling
         self.word_counts = defaultdict(int)
         self.total_words = 0
+        self.neg_sampling_table = None
 
     def update_word_counts(self, token_ids):
         # Update Word Frequency for Negative Sampling
@@ -27,22 +31,63 @@ class SimpleSkipGramEmbeddings:
             self.word_counts[token_id] += 1
             self.total_words += 1
 
-    def negative_sample(self, positive_context, num_samples=5):
-        # Fallback to Random Uniform Sampling
+    def build_negative_sampling_table(self, table_size = 1e8):
         if not self.word_counts:
-            return np.random.choice(self.vocab_size, num_samples, replace=False)
+            return
         
+        if self.verbosity > 0:
+            print("Building negative sampling table...")
+
+        table_size = int(table_size)
+
+        # Calculate Probabilities
         words = list(self.word_counts.keys())
-        probs = np.array([self.word_counts[w] ** 0.75 for w in words])
+        probs = np.array(self.word_counts[w] ** 0.75 for w in words)
         probs /= probs.sum()
 
-        negatives = []
-        while len(negatives) < num_samples:
-            sample = np.random.choice(words, p=probs)
-            if sample != positive_context and sample not in negatives:
-                negatives.append(sample)
+        # Build Table
+        self.neg_sampling_table = []
+        for i, word in enumerate(words):
+            count = int(probs[i] * table_size)
+            self.neg_sampling_table.extend([word] * max(1, count))
 
-        return negatives[:num_samples]
+        self.neg_sampling_table = np.array(self.neg_sampling_table)
+
+        if (self.verbosity > 0):
+            print(f"Negative sampling table built with {len(self.neg_sampling_table)}")
+
+
+    def negative_sample(self, positive_context, num_samples=5):
+        if self.neg_sampling_table is None or len(self.neg_sampling_table) == 0:
+            batch_size = len(positive_context) if hasattr(positive_context, '__len__') else 1
+            return np.random.choice(self.vocab_sie, (batch_size, num_samples))
+        
+        if not hasattr(positive_context, '__len__'):
+            positive_context = [positive_context]
+
+        batch_size = len(positive_context)
+        negatives = np.zeros((batch_size, num_samples), dtype=np.int32)
+
+        for i, pos_context in enumerate(positive_context):
+            neg_samples = set()
+            attemps = 0
+            max_attempts = num_samples * 10 # Prevent Infinite Loop
+
+            while len(neg_samples) < num_samples and attemps < max_attempts:
+                candidate = np.random.choice(self.neg_sampling_table)
+                if candidate != pos_context:
+                    neg_samples.add(candidate)
+                attempts += 1
+            
+            # Fill Remaining with Randoms in Case
+            neg_list = list(neg_samples)
+            while len(neg_list) < num_samples:
+                candidate = np.random.randint(0, self.vocab_size)
+                if candidate != pos_context and candidate not in neg_list:
+                    neg_list.append(candidate)
+            negatives[i] = neg_list[:num_samples]
+
+        return negatives if batch_size > 1 else negatives[0]
 
     def train_pair(self, center, context, lr=0.01, negative_samples=5):
         # Center Word Embedding
