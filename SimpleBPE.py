@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import Counter, defaultdict
 import re, json
 from tqdm import tqdm
 
@@ -12,31 +12,44 @@ class SimpleBPETokenizer:
 
     def apply_merge(self, word_tokens, merge_pair, new_token):
         new_word_tokens = []
-        merge_count = 0
+        affected_pairs = defaultdict(int)
         a, b = merge_pair
+
         for word_token_list in word_tokens:
             i = 0
             merged_list = []
+
             while i < len(word_token_list):
                 if (
                     i < len(word_token_list) - 1 and
                     word_token_list[i] == a and
                     word_token_list[i + 1] == b
                 ):
+                    # Track Removed Pairs
+                    affected_pairs[(a, b)] -= 1
+
+                    # Track Left/Right Neighbor Changes
+                    if i > 0:
+                        left_token = word_token_list[i - 1]
+                        affected_pairs[(left_token, a)] -= 1
+                        affected_pairs[(left_token, new_token)] += 1
+
+                    if i < len(word_token_list) - 2:
+                        right_token = word_token_list[i + 2]
+                        affected_pairs[(b, right_token)] -= 1
+                        affected_pairs[(new_token, right_token)] += 1
+
                     merged_list.append(new_token)
                     i += 2
-                    merge_count += 1
                 else:
                     merged_list.append(word_token_list[i])
                     i += 1
             new_word_tokens.append(merged_list)
-        return new_word_tokens, merge_count
+        return new_word_tokens, affected_pairs
 
     def train(self, text, vocab_size=100, min_frequency=3, verbosity=0):
-        # Breakup Input Text
+        # Breakup Input Text to Tokens
         original_words = re.findall(r"\w+|\s+|[^\w\s]", text)
-
-        # Convert Each Word to a List of Chars
         word_tokens = [list(word) for word in original_words]
 
         # Get Character Frequencies
@@ -44,73 +57,79 @@ class SimpleBPETokenizer:
         for word in original_words:
             char_counts.update(word)
 
+        # Initialize Vocab w/ Chars
         self.vocab.update(
             {token: idx + len(self.special_tokens)
              for idx, token in enumerate(char_counts.keys())}
         )
 
+        # Initialize Pair Prequencies
+        pair_freqs = Counter()
+        for word in word_tokens:
+            for i in range(len(word) - 1):
+                pair_freqs[(word[i], word[i + 1])] += 1
+
         # Begin BPE Training Loop
-        ii = 0
-        while len(self.vocab) < vocab_size:
+        iterations = 0
+        while len(self.vocab) < vocab_size and pair_freqs:
             # Debug Statement Frequency Depending on Verbosity
             if verbosity > 0:
-                if verbosity > 1:
-                    print(f"Iteration {ii}: {len(self.vocab)} / {vocab_size}")
-                elif ii % 10 == 0:
-                    print(f"Iteration {ii}: {len(self.vocab)} / {vocab_size}")
+                if verbosity > 1 or iterations % 10 == 0:
+                    print(f"Iteration {iterations}: {len(self.vocab)} / {vocab_size}")
 
-            pairs = Counter()
-            for words_token_list in word_tokens:                            # Iterate Over All Word's Char List
-                for i in range(len(words_token_list) - 1):                  # Iterate Over Each Char in Word's Char List
-                    pair = (words_token_list[i], words_token_list[i + 1])   # Create Pairs From Each Word
-                    pairs[pair] += 1                                            # Increment Frequency
-
-            # Ensure Progress Continues
-            if not pairs:
-                print("No more pairs found - exiting...")
-                break
-
-            best_pair = max(pairs.items(), key=lambda x: x[1])[0]
-            best_freq = pairs[best_pair]
+            # Pick Most Frequent Pair
+            best_pair, best_freq = max(pair_freqs.items(), key=lambda x: x[1])
 
             # Debug Statement Frequency Depending on Verbosity
             if verbosity > 0:
-                if verbosity > 1:
-                    print(f"\tBest Pair: {best_pair} with frequency {best_freq}")
-                elif ii % 10 == 0:
+                if verbosity > 1 or iterations % 10 == 0:
                     print(f"\tBest Pair: {best_pair} with frequency {best_freq}")
 
             if best_freq < min_frequency:
                 print(f"\tFrequency {best_freq} < min_frequency {min_frequency}, exiting...")
                 break
 
+            # Merge Token
             new_token = "".join(best_pair)
 
             # Ensure Token Not Already Found
             if new_token in self.vocab:
-                print(f"\tToken '{new_token}' already exists in vocab, exiting...")
-                break
+                if verbosity > 0:
+                    print(f"\tToken '{new_token}' already exists in vocab, skipping...")
+                # Remove this pair and continue
+                del pair_freqs[best_pair]
+                continue
 
             # Add New Token to Vocab and Merges
             self.vocab[new_token] = len(self.vocab)
             self.merges.append(best_pair)
 
+            # For Faster Encoding
+            self.merge_lookup[best_pair] = new_token
+
             # Debug Statement Frequency Depending on Verbosity
             if verbosity > 0:
-                if verbosity > 1:
-                    print(f"\tAdded New Token: '{new_token}'")
-                elif ii % 10 == 0:
+                if verbosity > 1 or iterations % 10 == 0:
                     print(f"\tAdded New Token: '{new_token}'")
 
-            # Apply Merges
-            word_tokens, merge_count = self.apply_merge(word_tokens, best_pair, new_token)
-            if verbosity > 0 and (verbosity > 1 or ii % 10 == 0):
-                print(f"\tApplied merge, count: {merge_count}")
+            # Apply merge and get frequency updates
+            word_tokens, affected_pairs = self.apply_merge(
+                word_tokens, best_pair, new_token
+            )
 
-            ii += 1
+            # Update pair frequencies efficiently
+            for pair, change in affected_pairs.items():
+                if pair in pair_freqs:
+                    pair_freqs[pair] += change
+                    if pair_freqs[pair] <= 0:
+                        del pair_freqs[pair]
+                elif change > 0:
+                    pair_freqs[pair] = change
+
+            iterations += 1
             
             # Safety Break
-            if ii > vocab_size * 2:
+            if iterations > vocab_size * 2:
                 print("Too many iterations, exiting...")
 
         self.id_to_token = {v: k for k, v in self.vocab.items()}
