@@ -1,5 +1,6 @@
 from collections import Counter
 import re, json
+from tqdm import tqdm
 
 class SimpleBPETokenizer:
     def __init__(self, special_tokens = None):
@@ -7,6 +8,29 @@ class SimpleBPETokenizer:
         self.merges = []
         self.special_tokens = special_tokens or []
         self.id_to_token = {}
+        self.merge_lookup = {}
+
+    def apply_merge(self, word_tokens, merge_pair, new_token):
+        new_word_tokens = []
+        merge_count = 0
+        a, b = merge_pair
+        for word_token_list in word_tokens:
+            i = 0
+            merged_list = []
+            while i < len(word_token_list):
+                if (
+                    i < len(word_token_list) - 1 and
+                    word_token_list[i] == a and
+                    word_token_list[i + 1] == b
+                ):
+                    merged_list.append(new_token)
+                    i += 2
+                    merge_count += 1
+                else:
+                    merged_list.append(word_token_list[i])
+                    i += 1
+            new_word_tokens.append(merged_list)
+        return new_word_tokens, merge_count
 
     def train(self, text, vocab_size=100, min_frequency=3, verbosity=0):
         # Breakup Input Text
@@ -78,33 +102,10 @@ class SimpleBPETokenizer:
                 elif ii % 10 == 0:
                     print(f"\tAdded New Token: '{new_token}'")
 
-            # Apply Merge to All Word Token Lists
-            merge_count = 0
-            new_word_tokens = []
-
-            for word_token_list in word_tokens:
-                new_tokens = []
-                i = 0
-
-                while i < len(word_token_list):
-                    # Check if Tokens Can be Merged
-                    if (i < len(word_token_list) - 1 and
-                        word_token_list[i] == best_pair[0] and
-                        word_token_list[i + 1] == best_pair[1]):
-                        
-                        # Merge Pair
-                        new_tokens.append(new_token)
-                        i += 2 # Skip Forward
-                        merge_count += 1
-                    else:
-                        # Keep Current Token
-                        new_tokens.append(word_token_list[i])
-                        i += 1
-
-                new_word_tokens.append(new_tokens)
-            
-            # Update word_tokens for Next Iteration
-            word_tokens = new_word_tokens
+            # Apply Merges
+            word_tokens, merge_count = self.apply_merge(word_tokens, best_pair, new_token)
+            if verbosity > 0 and (verbosity > 1 or ii % 10 == 0):
+                print(f"\tApplied merge, count: {merge_count}")
 
             ii += 1
             
@@ -113,8 +114,10 @@ class SimpleBPETokenizer:
                 print("Too many iterations, exiting...")
 
         self.id_to_token = {v: k for k, v in self.vocab.items()}
+        self.merge_lookup = {pair: "".join(pair) for pair in self.merges} # Faster Encoding
 
     def encode(self, text):
+        print("Encoding...")
         # Breakup Input Text
         words = re.findall(r"\w+|\s+|[^\w\s]", text)
 
@@ -122,29 +125,13 @@ class SimpleBPETokenizer:
         word_tokens = [list(word) for word in words]
 
         # Apply Merges In Learned Order
-        for merge_pair in self.merges:
-            new_word_tokens = []
-            for word_token_list in word_tokens:
-                new_tokens = []
-                i = 0
-                while i < len(word_token_list):
-                    if (
-                        i < len(word_token_list) - 1 and
-                        word_token_list[i] == merge_pair[0] and
-                        word_token_list[i + 1] == merge_pair[1]
-                    ):
-                        merged_token = "".join(merge_pair)
-                        new_tokens.append(merged_token)
-                        i += 2
-                    else:
-                        new_tokens.append(word_token_list[i])
-                        i += 1
-                new_word_tokens.append(new_tokens)
-            word_tokens = new_word_tokens
+        for merge_pair in tqdm(self.merges, desc="Applying Merges"):
+            new_token = self.merge_lookup[merge_pair]
+            word_tokens, _ = self.apply_merge(word_tokens, merge_pair, new_token)
 
         # Convert Tokens to IDs
         token_ids = []
-        for word_token_list in word_tokens:
+        for word_token_list in tqdm(word_tokens, desc="Converting Tokens"):
             for token in word_token_list:
                 if token in self.vocab:
                     token_ids.append(self.vocab[token])
@@ -154,7 +141,7 @@ class SimpleBPETokenizer:
                     for char in token:
                         if char in self.vocab:
                             token_ids.append(self.vocab[char])
-
+        print("Encoded!")
         return token_ids
                     
 
@@ -193,5 +180,6 @@ class SimpleBPETokenizer:
         tokenizer.merges = [(pair[0], pair[1]) if isinstance(pair, list) else pair 
                            for pair in tokenizer_data['merges']]
         tokenizer.id_to_token = {v: k for k, v in tokenizer.vocab.items()}
+        tokenizer.merge_lookup = {pair: "".join(pair) for pair in tokenizer.merges}
 
         return tokenizer
