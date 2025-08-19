@@ -111,6 +111,10 @@ class SimpleBPETokenizer:
         # Initialize Pair Prequencies
         pair_freqs = self.get_pairs(word_tokens)
 
+        # Pre-Allocated
+        max_pair = None
+        max_freq = 0
+
         # Begin BPE Training Loop
         iterations = 0
         total_iterations = vocab_size - len(self.vocab)
@@ -119,9 +123,18 @@ class SimpleBPETokenizer:
                 if verbosity > 0 and (verbosity > 1 or iterations % 10 == 0):
                     print(f"Iteration {iterations}: {len(self.vocab)} / {vocab_size}")
 
-                # Find Best Pair
-                best_pair = max(pair_freqs, key=pair_freqs.get)
-                best_freq = pair_freqs[best_pair]
+                # Find Best Pair - Cached
+                if not max_pair or max_pair not in pair_freqs:
+                    max_pair = max(pair_freqs, key=pair_freqs.get)
+                    max_freq = pair_freqs[max_pair]
+                else:
+                    current_freq = pair_freqs.get(max_pair, 0)
+                    if current_freq != max_freq or current_freq == 0:
+                        max_pair = max(pair_freqs, key=pair_freqs.get)
+                        max_freq = pair_freqs[max_pair]
+
+                best_pair = max_pair
+                best_freq = max_freq
 
                 if verbosity > 0 and (verbosity > 1 or iterations % 10 == 0):
                     print(f"\tBest Pair: {best_pair} with frequency {best_freq}")
