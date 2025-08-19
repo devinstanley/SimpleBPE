@@ -5,12 +5,12 @@ from SimpleEmbeddings import SimpleSkipGramEmbeddings
 
 tests = {
     'small': {
-        'vocab_size': 3000,
+        'vocab_size': 8000,
         'min_frequency': 3,
-        'embedding_dimension': 128,
+        'embedding_dimension': 256,
         'embedding_lr': 0.025,
         'embedding_epochs': 3,
-        'embedding_window': 5,
+        'embedding_window': 10,
         'embedding_negative_samples': 10,
         'embedding_subsample_thresh': 1e-4
     }
@@ -58,14 +58,14 @@ class Tester:
         embedding.train_on_tokens(
             tokens, 
             window_size=test['embedding_window'], 
-            epochs=tests['embedding_epochs'], 
-            lr=tests['embedding_lr'], 
-            negative_samples=tests['embedding_negative_samples'],
-            subsample_threshold=tests['embedding_subsample_thresh']
+            epochs=test['embedding_epochs'], 
+            lr=test['embedding_lr'], 
+            negative_samples=test['embedding_negative_samples'],
+            subsample_threshold=test['embedding_subsample_thresh']
         )
 
         if len(tokens) > 10:
-            for i in range(10):
+            for i in range(40):
                 test_token = np.random.choice(tokens)
                 decoded_token = bpe.decode([test_token])
                 similar = embedding.most_similar(test_token, top_k=3)
