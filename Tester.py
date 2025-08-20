@@ -28,6 +28,8 @@ class Tester:
 
     def run_tests(self, test):
         bpe = self.run_BPE(test)
+        bpe.save("tokens.pht")
+        #bpe = SimpleBPETokenizer.load("tokens.pht")
         self.test_encoding(bpe)
         self.embed_tokens(bpe, test)
 
