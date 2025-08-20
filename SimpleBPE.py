@@ -27,7 +27,7 @@ class SimpleBPETokenizer:
         frequency_changes = defaultdict(int)
         a, b = merge_pair
 
-        for word_idx, word_token_list in enumerate(word_tokens):
+        for word_token_list in word_tokens:
             word_len = len(word_token_list)
             if word_len < 2:
                 new_word_tokens.append(word_token_list)
@@ -64,16 +64,25 @@ class SimpleBPETokenizer:
                     frequency_changes[(new_token, right_token)] += 1
 
             # Apply Merges
-            merged_list = []
-            i = 0
-            while i < len(word_token_list):
-                if (i < len(word_token_list) - 1 and 
-                    word_token_list[i] == a and word_token_list[i + 1] == b):
-                    merged_list.append(new_token)
-                    i += 2
-                else:
-                    merged_list.append(word_token_list[i])
-                    i += 1
+            # Only Single Merge - Skip Complex Merge Logic
+            if len(merge_positions) == 1:
+                pos = merge_positions[0]
+                merged_list = (word_token_list[:pos] +
+                               [new_token] + 
+                               word_token_list[pos + 2:])
+                new_word_tokens.append(merged_list)
+                continue
+            else:
+                merged_list = []
+                i = 0
+                while i < len(word_token_list):
+                    if (i < len(word_token_list) - 1 and 
+                        word_token_list[i] == a and word_token_list[i + 1] == b):
+                        merged_list.append(new_token)
+                        i += 2
+                    else:
+                        merged_list.append(word_token_list[i])
+                        i += 1
 
             new_word_tokens.append(merged_list)
 
