@@ -1,7 +1,6 @@
 from collections import Counter, defaultdict
 import re, json
 from tqdm import tqdm
-import numpy as np
 
 class SimpleBPETokenizer:
     def __init__(self, special_tokens = None):
@@ -15,15 +14,8 @@ class SimpleBPETokenizer:
         pair_freqs = Counter()
 
         for word_token_list in word_tokens:
-            if len(word_token_list) < 2:
-                continue
-
-            # Convert to Numpy for Vectorization
-            word_array = np.array(word_token_list, dtype=object)
-
-            # Create Pairs w Array Slicing
-            if len(word_array) > 1:
-                pairs = list(zip(word_array[:-1], word_array[1:]))
+            if len(word_token_list) >= 2:
+                pairs = list(zip(word_token_list[:-1], word_token_list[1:]))
                 pair_freqs.update(pairs)
 
         return pair_freqs
@@ -39,13 +31,10 @@ class SimpleBPETokenizer:
                 new_word_tokens.append(word_token_list)
                 continue
 
-            # Convert to Numpy for Vectorization
-            word_array = np.array(word_token_list, dtype=object)
-
             # Find Merge Positions
             merge_positions = []
-            for i in range(len(word_array) - 1):
-                if word_array[i] == a and word_array[i + 1] == b:
+            for i in range(len(word_token_list) - 1):
+                if word_token_list[i] == a and word_token_list[i + 1] == b:
                     merge_positions.append(i)
 
             if not merge_positions:
@@ -59,19 +48,26 @@ class SimpleBPETokenizer:
 
                 # Update Neighbors
                 if pos > 0:
-                    left_token = word_array[pos - 1]
+                    left_token = word_token_list[pos - 1]
                     frequency_changes[(left_token, a)] -= 1
                     frequency_changes[(left_token, new_token)] += 1
 
-                if pos + 2 < len(word_array):
-                    right_token = word_array[pos + 2]
+                if pos + 2 < len(word_token_list):
+                    right_token = word_token_list[pos + 2]
                     frequency_changes[(b, right_token)] -= 1
                     frequency_changes[(new_token, right_token)] += 1
 
-            # Apply Merges, Reverse Order to Maintain Indices
-            merged_list = list(word_array)
-            for pos in reversed(merge_positions):
-                merged_list[pos:pos+2] = [new_token]
+            # Apply Merges
+            merged_list = []
+            i = 0
+            while i < len(word_token_list):
+                if (i < len(word_token_list) - 1 and 
+                    word_token_list[i] == a and word_token_list[i + 1] == b):
+                    merged_list.append(new_token)
+                    i += 2
+                else:
+                    merged_list.append(word_token_list[i])
+                    i += 1
 
             new_word_tokens.append(merged_list)
 
@@ -82,14 +78,13 @@ class SimpleBPETokenizer:
             if change == 0:
                 continue
 
-            if pair in pair_freqs:
-                new_freq = pair_freqs[pair] + change
-                if new_freq <= 0:
-                    del pair_freqs[pair]
-                else:
-                    pair_freqs[pair] = new_freq
-            elif change > 0:
-                pair_freqs[pair] = change
+            current_freq = pair_freqs.get(pair, 0)
+            new_freq = current_freq + change
+
+            if new_freq <= 0:
+                pair_freqs.pop(pair, None)
+            else:
+                pair_freqs[pair] = new_freq
 
 
     def train(self, text, vocab_size=100, min_frequency=3, verbosity=0):
@@ -120,8 +115,8 @@ class SimpleBPETokenizer:
         total_iterations = vocab_size - len(self.vocab)
         with tqdm(total=total_iterations, desc="Training BPE") as pbar:
             while len(self.vocab) < vocab_size and pair_freqs:
-                if verbosity > 0 and (verbosity > 1 or iterations % 10 == 0):
-                    print(f"Iteration {iterations}: {len(self.vocab)} / {vocab_size}")
+                if verbosity > 0 and (verbosity > 1 or iterations % 100 == 0):
+                    print(f"\nIteration {iterations}: {len(self.vocab)} / {vocab_size}")
 
                 # Find Best Pair - Cached
                 if not max_pair or max_pair not in pair_freqs:
@@ -136,7 +131,7 @@ class SimpleBPETokenizer:
                 best_pair = max_pair
                 best_freq = max_freq
 
-                if verbosity > 0 and (verbosity > 1 or iterations % 10 == 0):
+                if verbosity > 0 and (verbosity > 1 or iterations % 100 == 0):
                     print(f"\tBest Pair: {best_pair} with frequency {best_freq}")
 
                 # Check Threshold
@@ -160,7 +155,7 @@ class SimpleBPETokenizer:
                 self.merges.append(best_pair)
                 self.merge_lookup[best_pair] = new_token
 
-                if verbosity > 0 and (verbosity > 1 or iterations % 10 == 0):
+                if verbosity > 0 and (verbosity > 1 or iterations % 100 == 0):
                     print(f"\tAdded New Token: '{new_token}'")
 
                 # Apply Merge and Get Frequency Changes
