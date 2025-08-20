@@ -1,6 +1,7 @@
 from collections import Counter, defaultdict
 import re, json
 from tqdm import tqdm
+import heapq
 
 class SimpleBPETokenizer:
     def __init__(self, special_tokens = None):
@@ -15,7 +16,7 @@ class SimpleBPETokenizer:
 
         for word_token_list in word_tokens:
             if len(word_token_list) >= 2:
-                pairs = list(zip(word_token_list[:-1], word_token_list[1:]))
+                pairs = zip(word_token_list[:-1], word_token_list[1:])
                 pair_freqs.update(pairs)
 
         return pair_freqs
@@ -27,15 +28,20 @@ class SimpleBPETokenizer:
         a, b = merge_pair
 
         for word_idx, word_token_list in enumerate(word_tokens):
-            if len(word_token_list) < 2:
+            word_len = len(word_token_list)
+            if word_len < 2:
                 new_word_tokens.append(word_token_list)
                 continue
 
             # Find Merge Positions
             merge_positions = []
-            for i in range(len(word_token_list) - 1):
+            i = 0
+            while i < word_len - 1:
                 if word_token_list[i] == a and word_token_list[i + 1] == b:
                     merge_positions.append(i)
+                    i += 2
+                else:
+                    i += 1
 
             if not merge_positions:
                 new_word_tokens.append(word_token_list)
@@ -105,30 +111,41 @@ class SimpleBPETokenizer:
         # Initialize Pair Prequencies
         pair_freqs = self.get_pairs(word_tokens)
 
-        # Pre-Allocated
-        max_pair = None
-        max_freq = 0
+        # Use Heap Cache Strategy
+        best_pairs_heap = []
+        cache_size = min(200, len(pair_freqs))
+
+        # Initialize Heap
+        for pair, freq in pair_freqs.most_common(cache_size):
+            heapq.heappush(best_pairs_heap, (-freq, pair))
 
         # Begin BPE Training Loop
         iterations = 0
         total_iterations = vocab_size - len(self.vocab)
-        with tqdm(total=total_iterations, desc="Training BPE") as pbar:
+
+        with tqdm(total=total_iterations, desc="Training BPE", mininterval=0.5) as pbar:
             while len(self.vocab) < vocab_size and pair_freqs:
                 if verbosity > 0 and (verbosity > 1 or iterations % 100 == 0):
                     print(f"\nIteration {iterations}: {len(self.vocab)} / {vocab_size}")
 
-                # Find Best Pair - Cached
-                if not max_pair or max_pair not in pair_freqs:
-                    max_pair = max(pair_freqs, key=pair_freqs.get)
-                    max_freq = pair_freqs[max_pair]
-                else:
-                    current_freq = pair_freqs.get(max_pair, 0)
-                    if current_freq != max_freq or current_freq == 0:
-                        max_pair = max(pair_freqs, key=pair_freqs.get)
-                        max_freq = pair_freqs[max_pair]
+                # Find Best Pair - Heap
+                best_pair = None
+                best_freq = 0
 
-                best_pair = max_pair
-                best_freq = max_freq
+                while best_pairs_heap:
+                    neg_freq, pair = heapq.heappop(best_pairs_heap)
+                    freq = -neg_freq
+
+                    if pair in pair_freqs and pair_freqs[pair] == freq:
+                        best_pair = pair
+                        best_freq = freq
+                        break
+                
+                # If Cache Miss, Find Best Pair
+                if best_pair is None and pair_freqs:
+                    print("Heap Missed!")
+                    best_pair = max(pair_freqs, key=pair_freqs.get)
+                    best_freq = pair_freqs[best_pair]
 
                 if verbosity > 0 and (verbosity > 1 or iterations % 100 == 0):
                     print(f"\tBest Pair: {best_pair} with frequency {best_freq}")
@@ -146,7 +163,7 @@ class SimpleBPETokenizer:
                 if new_token in self.vocab:
                     if verbosity > 0:
                         print(f"\tToken '{new_token}' already exists in vocab, skipping...")
-                    del pair_freqs[best_pair]
+                    pair_freqs.pop(best_pair, None)
                     continue
 
                 # Add to Vocab and Merges
@@ -162,6 +179,13 @@ class SimpleBPETokenizer:
 
                 # Update Frequencies
                 self.update_pair_frequencies(pair_freqs, frequency_changes)
+
+                # Refresh Heap Periodically
+                if iterations % 50 == 0 and pair_freqs:
+                    best_pairs_heap.clear()
+                    cache_size = min(100, len(pair_freqs))
+                    for pair, freq in pair_freqs.most_common(cache_size):
+                        heapq.heappush(best_pairs_heap, (-freq, pair))
 
                 iterations += 1
                 pbar.update(1)
