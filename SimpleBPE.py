@@ -5,11 +5,24 @@ import heapq
 
 class SimpleBPETokenizer:
     def __init__(self, special_tokens = None):
+        default_special = ['<|endoftext|>', '<|unk|>', '<|space|>', '<|newline|>']
         self.vocab = {}
         self.merges = []
-        self.special_tokens = special_tokens or []
+        if special_tokens:
+            default_special.extend(special_tokens)
+        self.special_tokens = default_special
         self.id_to_token = {}
         self.merge_lookup = {}
+
+    def preprocess_text(self, text):
+        text = text.replace(' ', '<|space|>')
+        text = text.replace('\n', '<|newline|>')
+        return text
+
+    def postprocess_text(self, text):
+        text = text.replace('<|space|>', ' ')
+        text = text.replace('<|newline|>', '\n')
+        return text
 
     def get_pairs(self, word_tokens):
         pair_freqs = Counter()
@@ -104,7 +117,8 @@ class SimpleBPETokenizer:
 
     def train(self, text, vocab_size=100, min_frequency=3, verbosity=0):
         # Breakup Input Text to Tokens
-        word_pattern = re.compile(r"\w+|\s+|[^\w\s]")
+        text = self.preprocess_text(text)
+        word_pattern = re.compile(r"<\|space\|>|<\|newline\|>|\w+|[^\w\s]")
         original_words = word_pattern.findall(text)
         word_tokens = [list(word) for word in original_words]
 
@@ -211,7 +225,8 @@ class SimpleBPETokenizer:
     def encode(self, text):
         print("Encoding...")
         # Breakup Input Text
-        word_pattern = re.compile(r"\w+|\s+|[^\w\s]")
+        text = self.preprocess_text(text)
+        word_pattern = re.compile(r"<\|space\|>|<\|newline\|>|\w+|[^\w\s]")
         words = word_pattern.findall(text)
 
         # Convert Each Word to a List of Chars
@@ -242,7 +257,7 @@ class SimpleBPETokenizer:
                 # TODO:: Handle Unknowns Here
                 # For now, append UNK
                 tokens.append("<UNK>")
-        return "".join(tokens)
+        return self.postprocess_text("".join(tokens))
 
     def save(self, filepath):
         # Pack Into Dictionary
