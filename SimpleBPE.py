@@ -89,13 +89,12 @@ class SimpleBPETokenizer:
 
     def train(self, text, vocab_size=100, min_frequency=3, verbosity=0):
         # Breakup Input Text to Tokens
-        original_words = re.findall(r"\w+|\s+|[^\w\s]", text)
+        word_pattern = re.compile(r"\w+|\s+|[^\w\s]")
+        original_words = word_pattern.findall(text)
         word_tokens = [list(word) for word in original_words]
 
         # Get Character Frequencies
-        char_counts = Counter()
-        for word in original_words:
-            char_counts.update(word)
+        char_counts = Counter(''.join(original_words))
 
         # Initialize Vocab w/ Chars
         self.vocab.update(
