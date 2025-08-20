@@ -211,31 +211,27 @@ class SimpleBPETokenizer:
     def encode(self, text):
         print("Encoding...")
         # Breakup Input Text
-        words = re.findall(r"\w+|\s+|[^\w\s]", text)
+        word_pattern = re.compile(r"\w+|\s+|[^\w\s]")
+        words = word_pattern.findall(text)
 
         # Convert Each Word to a List of Chars
         word_tokens = [list(word) for word in words]
 
-        # Apply Merges In Learned Order
-        for merge_pair in tqdm(self.merges, desc="Applying Merges"):
-            new_token = self.merge_lookup[merge_pair]
-            word_tokens, _ = self.apply_merge(word_tokens, merge_pair, new_token)
-
-        # Convert Tokens to IDs
         token_ids = []
-        for word_token_list in tqdm(word_tokens, desc="Converting Tokens"):
-            for token in word_token_list:
-                if token in self.vocab:
-                    token_ids.append(self.vocab[token])
-                else:
-                    # TODO:: Handle Unknown Tokens Here
-                    # For now, attempt to go char by char
-                    for char in token:
-                        if char in self.vocab:
-                            token_ids.append(self.vocab[char])
-        print("Encoded!")
+        for word in tqdm(word_tokens, desc="Encoding..."):
+            while True:
+                pairs = [(word[i], word[i+1]) for i in range(len(word) - 1)]
+                candidate = min(
+                    ((pair, idx) for idx, pair in enumerate(pairs) if pair in self.merge_lookup),
+                    default=None,
+                    key=lambda x: self.merges.index(x[0])
+                )
+                if not candidate:
+                    break
+                (a, b), idx = candidate
+                word = word[:idx] + [self.merge_lookup[(a, b)]] + word[idx+2:]
+            token_ids.extend(self.vocab[t] for t in word)
         return token_ids
-                    
 
     def decode(self, token_ids):
         tokens = []
